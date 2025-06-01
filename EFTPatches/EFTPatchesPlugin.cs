@@ -1,20 +1,14 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Linq;
-using System.Threading.Tasks;
-using BepInEx;
+﻿using BepInEx;
 using BepInEx.Logging;
 using EFTPatches.Patches;
-using HarmonyLib;
-using UnityEngine.Networking;
+
 // ReSharper disable UnusedMember.Local
 // ReSharper disable InconsistentNaming
 #pragma warning disable IDE0051 // Remove unused private members
 
 namespace EFTPatches
 {
-    [BepInPlugin("com.silve.eftpatches", "EFTPatches", "1.0.0")]
+    [BepInPlugin("com.silve.eftpatches", "EFTPatches", "1.1")]
     public class EFTPatchesPlugin : BaseUnityPlugin
     {
         public static EFTPatchesPlugin Instance { get; private set; }

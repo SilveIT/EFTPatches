@@ -5,42 +5,65 @@ namespace EFTPatches
     using BepInEx.Configuration;
     using System.Diagnostics.CodeAnalysis;
     internal class PluginSettings
+    {
+        public static PluginSettings Instance { get; private set; }
+
+        // UnityWebRequest Fix settings
+        public readonly ConfigEntry<bool> LogRequests;
+        public readonly ConfigEntry<bool> LogPostData;
+        public readonly ConfigEntry<bool> LogHeaders;
+        public readonly ConfigEntry<bool> LogResponses;
+        public readonly ConfigEntry<int> MaxHexLogLength;
+
+        private const string UnityWebSection = "UnityWebRequest Fix";
+
+        [SuppressMessage("ReSharper", "RedundantTypeArgumentsOfMethod")]
+        private PluginSettings(ConfigFile configFile)
         {
-            public static PluginSettings Instance { get; private set; }
+            // Bind settings under "UnityWebRequest Fix" section
+            LogRequests = configFile.Bind(
+                UnityWebSection,
+                "Log UnityWebRequest-s",
+                false,
+                new ConfigDescription("Logs all URLs requested via UnityWebRequest.")
+            );
 
-            // UnityWebRequest Fix settings
-            public readonly ConfigEntry<bool> LogUrls;
-            public readonly ConfigEntry<bool> LogPostData;
+            LogPostData = configFile.Bind(
+                UnityWebSection,
+                "Log POST Data",
+                false,
+                new ConfigDescription("Logs the data sent in POST requests via UnityWebRequest.")
+            );
 
-            private const string UnityWebSection = "UnityWebRequest Fix";
+            LogHeaders = configFile.Bind(
+                UnityWebSection,
+                "Log Headers",
+                true,
+                new ConfigDescription("Logs HTTP headers of outgoing requests."));
 
-            [SuppressMessage("ReSharper", "RedundantTypeArgumentsOfMethod")]
-            private PluginSettings(ConfigFile configFile)
-            {
-                // Bind settings under "UnityWebRequest Fix" section
-                LogUrls = configFile.Bind(
+            LogResponses = configFile.Bind(
+                UnityWebSection,
+                "Log Responses",
+                true,
+                new ConfigDescription("Logs HTTP responses received from the server."));
+
+            MaxHexLogLength = configFile.Bind(
                     UnityWebSection,
-                    "Log URLs",
-                    false,
-                    new ConfigDescription("Logs all URLs requested via UnityWebRequest.")
-                );
+                    "HEX Dump Limit",
+                    512,
+                    new ConfigDescription("Maximum number of bytes to show in hex dumps for request data.",
+                        new AcceptableValueRange<int>(16, 1024 * 1024)));
 
-                LogPostData = configFile.Bind(
-                    UnityWebSection,
-                    "Log POST Data",
-                    false,
-                    new ConfigDescription("Logs the body/data sent in POST requests via UnityWebRequest.")
-                );
-            }
+        }
 
         public static PluginSettings Create(ConfigFile configFile)
-            {
-                if (Instance != null)
-                    return Instance;
+        {
+            if (Instance != null)
+                return Instance;
 
-                return Instance = new PluginSettings(configFile);
-            }
+            return Instance = new PluginSettings(configFile);
         }
+    }
 }
 
 #endif

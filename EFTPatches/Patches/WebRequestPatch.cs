@@ -13,6 +13,7 @@ using BackResponse = GClass629;
 using WebLogger = GClass630;
 using System.IO.Compression;
 using System.IO;
+using System.Text;
 
 namespace EFTPatches.Patches
 {
@@ -31,52 +32,156 @@ namespace EFTPatches.Patches
             int timeoutSeconds,
             ref Task<BackResponse> __result)
         {
-            // Log URL if setting is enabled
-            if (PluginSettings.Instance.LogUrls.Value)
+            var settings = PluginSettings.Instance;
+
+            var logRequestsEnabled = settings.LogRequests.Value;
+
+            if (logRequestsEnabled)
             {
-                EFTPatchesPlugin.PluginLogger.LogInfo($"[WebRequest] URL: {url}");
+                var logBuilder = new StringBuilder();
+
+                logBuilder.AppendLine($"[UWR] Request URL: {url}");
+
+                // Log Headers if enabled
+                if (settings.LogHeaders.Value && headers != null && headers.Count > 0)
+                {
+                    var headerLog = HeadersToString(headers, "\n");
+                    logBuilder.AppendLine($"Headers:\n{headerLog}");
+                }
+
+                // Log POST Data if enabled
+                if (settings.LogPostData.Value)
+                {
+                    if (data != null && data.Length > 0 && data.Length > 2 && IsZLibCompressed(data))
+                    {
+                        try
+                        {
+                            var unZipped = DecompressZLib(data);
+                            if (unZipped.Length > 0)
+                            {
+                                var maxLength = PluginSettings.Instance.MaxHexLogLength.Value;
+                                var hex = unZipped.Take(maxLength).ToArray().ToHex();
+                                var note = unZipped.Length > maxLength ? $" (first {maxLength} of {unZipped.Length} bytes)" : $" ({unZipped.Length} bytes)";
+                                logBuilder.AppendLine($"POST Data (decompressed):{note}\n{hex}");
+                            }
+                            else
+                                logBuilder.AppendLine("POST Data (decompressed): EMPTY");
+                        }
+                        catch (Exception e)
+                        {
+                            logBuilder.AppendLine($"Unable to decompress:\n{e}");
+                        }
+                    }
+                    else
+                    {
+                        if (data != null && data.Length > 0)
+                        {
+                            var maxLength = PluginSettings.Instance.MaxHexLogLength.Value;
+                            var hex = data.Take(maxLength).ToArray().ToHex();
+                            var note = data.Length > maxLength ? $" (first {maxLength} of {data.Length} bytes)" : $" ({data.Length} bytes)";
+                            logBuilder.AppendLine($"POST Data:{note}\n{hex}");
+                        }
+                        else
+                            logBuilder.AppendLine("POST Data: EMPTY");
+                    }
+                }
+
+                var finalLog = logBuilder.ToString();
+                if (!string.IsNullOrEmpty(finalLog))
+                {
+                    EFTPatchesPlugin.PluginLogger.LogInfo(finalLog.TrimEnd());
+                }
             }
 
-            // Log POST data in hex if setting is enabled
-            if (PluginSettings.Instance.LogPostData.Value)
+            var r = RetryWaitResponse(url, data, headers, timeoutSeconds, EFTPatchesPlugin.WEBRequestRetries);
+            __result = r;
+
+            if (logRequestsEnabled && settings.LogResponses.Value)
             {
-                if (data != null && data.Length > 0 && data.Length > 2 &&
-                    IsZLibCompressed(data))
+                // Fire-and-forget logging after response completes
+                Task.Run(async () =>
                 {
                     try
                     {
-                        var unZipped = DecompressZLib(data);
-                        if (unZipped.Length > 0)
+                        // Wait for the response to complete
+                        BackResponse response = await r.ConfigureAwait(false);
+
+                        if (response != null)
                         {
-                            var maxLength = 512;
-                            var hex = unZipped.Take(maxLength).ToArray().ToHex();
-                            var note = unZipped.Length > maxLength ? $" (first {maxLength} of {unZipped.Length} bytes)" : "";
-                            EFTPatchesPlugin.PluginLogger.LogInfo($"[WebRequest] POST Data (decompressed):{note}\n{hex}");
+                            var logBuilder = new StringBuilder();
+
+                            // Log response URL
+                            logBuilder.AppendLine($"[UWR] Response URL: {url}");
+
+                            // Log response headers
+                            if (settings.LogHeaders.Value && response.responseHeaders != null && response.responseHeaders.Count > 0)
+                            {
+                                var headerLog = HeadersToString(response.responseHeaders, "\n");
+                                logBuilder.AppendLine($"Response Headers:\n{headerLog}");
+                            }
+
+                            // Log response body (hex or text)
+                            if (settings.LogPostData.Value)
+                            {
+                                if (response.responseData != null && response.responseData.Length > 0)
+                                {
+                                    byte[] responseData = response.responseData;
+                                    bool isZlib = IsZLibCompressed(responseData);
+
+                                    if (isZlib)
+                                    {
+                                        try
+                                        {
+                                            var unZipped = DecompressZLib(responseData);
+                                            if (unZipped.Length > 0)
+                                            {
+                                                var maxLength = settings.MaxHexLogLength.Value;
+                                                var hex = unZipped.Take(maxLength).ToArray().ToHex();
+                                                var note = unZipped.Length > maxLength ? $" (first {maxLength} of {unZipped.Length} bytes)" : $" ({unZipped.Length} bytes)";
+                                                logBuilder.AppendLine($"Response Data (decompressed):{note}\n{hex}");
+                                            }
+                                            else
+                                            {
+                                                logBuilder.AppendLine("Response Data (decompressed): EMPTY");
+                                            }
+                                        }
+                                        catch (Exception e)
+                                        {
+                                            logBuilder.AppendLine($"Unable to decompress response:\n{e.Message}");
+                                        }
+                                    }
+                                    else
+                                    {
+                                        var maxLength = settings.MaxHexLogLength.Value;
+                                        var hex = responseData.Take(maxLength).ToArray().ToHex();
+                                        var note = responseData.Length > maxLength ? $" (first {maxLength} of {responseData.Length} bytes)" : $" ({responseData.Length} bytes)";
+                                        logBuilder.AppendLine($"Response Data:{note}\n{hex}");
+                                    }
+                                }
+                                else
+                                {
+                                    logBuilder.AppendLine("Response Data: EMPTY");
+                                }
+                            }
+
+                            // Also log status code or error info
+                            if (response.responseCode >= 400 || !string.IsNullOrEmpty(response.errorText))
+                            {
+                                logBuilder.AppendLine($"Status Code: {response.responseCode}");
+                                if (!string.IsNullOrEmpty(response.errorText))
+                                    logBuilder.AppendLine($"Error: {response.errorText}");
+                            }
+
+                            EFTPatchesPlugin.PluginLogger.LogInfo(logBuilder.ToString().TrimEnd());
                         }
-                        else
-                            EFTPatchesPlugin.PluginLogger.LogInfo($"[WebRequest] POST Data (decompressed): EMPTY");
                     }
-                    catch (Exception e)
+                    catch (Exception ex)
                     {
-                        EFTPatchesPlugin.PluginLogger.LogError($"[WebRequest] Unable to decompress:\n" + e);
-                        // ignored
+                        EFTPatchesPlugin.PluginLogger.LogError($"Failed to log response:\n{ex}");
                     }
-                }
-                else
-                {
-                    if (data != null && data.Length > 0)
-                    {
-                        var maxLength = 512;
-                        var hex = data.Take(maxLength).ToArray().ToHex();
-                        var note = data.Length > maxLength ? $" (first {maxLength} of {data.Length} bytes)" : "";
-                        EFTPatchesPlugin.PluginLogger.LogInfo($"[WebRequest] POST Data:{note}\n{hex}");
-                    }
-                    else
-                        EFTPatchesPlugin.PluginLogger.LogInfo($"[WebRequest] POST Data: EMPTY");
-                }
+                });
             }
 
-            __result = RetryWaitResponse(url, data, headers, timeoutSeconds, EFTPatchesPlugin.WEBRequestRetries);
             return false; // Skip the original method execution
         }
 
@@ -126,7 +231,7 @@ namespace EFTPatches.Patches
                             errorText = errorText == "Unknown Error"
                                 ? "Certificate validation error"
                                 : errorText + "\n" + unityWebRequest.downloadHandler.text;
-                            logError = $"<--- Error! HTTPS: {url}, isNetworkError:{unityWebRequest.isNetworkError}, isHttpError:{unityWebRequest.isHttpError}, responseCode:{(int)unityWebRequest.responseCode}\n responseHeaders:{ResponseHeadersToString(unityWebRequest.GetResponseHeaders(), "\n")}\nerror text: {errorText}";
+                            logError = $"<--- Error! HTTPS: {url}, isNetworkError:{unityWebRequest.isNetworkError}, isHttpError:{unityWebRequest.isHttpError}, responseCode:{(int)unityWebRequest.responseCode}\n responseHeaders:{HeadersToString(unityWebRequest.GetResponseHeaders(), "\n")}\nerror text: {errorText}";
                         }
                     }
 
@@ -186,22 +291,22 @@ namespace EFTPatches.Patches
             return null;
         }
 
-        private static string ResponseHeadersToString(Dictionary<string, string> headers, string separator)
+        private static string HeadersToString(Dictionary<string, string> headers, string separator)
         {
             if (headers == null)
             {
                 return string.Empty;
             }
             var text = string.Empty;
-            var aggregator = new ResponseHeadersAggregator(separator);
+            var aggregator = new HeadersAggregator(separator);
 
             text = headers.Aggregate(text, aggregator.Aggregate);
             return text;
         }
 
-        public class ResponseHeadersAggregator
+        public class HeadersAggregator
         {
-            public ResponseHeadersAggregator(string separator)
+            public HeadersAggregator(string separator)
             {
                 _separator = separator;
             }
