@@ -8,7 +8,7 @@ using EFTPatches.Patches;
 
 namespace EFTPatches
 {
-    [BepInPlugin("com.silve.eftpatches", "EFTPatches", "1.1")]
+    [BepInPlugin("com.silve.eftpatches", "EFTPatches", "1.2")]
     public class EFTPatchesPlugin : BaseUnityPlugin
     {
         public static EFTPatchesPlugin Instance { get; private set; }
@@ -19,6 +19,7 @@ namespace EFTPatches
             Instance = this;
             PluginSettings.Create(Config);
             new WebRequestPatch().Enable();
+            new MongoIDPatch().Enable();
         }
     }
 }
