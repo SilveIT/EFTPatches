@@ -154,7 +154,7 @@ namespace EFTPatches.Patches
                                         }
                                         catch (Exception e)
                                         {
-                                            logBuilder.AppendLine($"Unable to decompress response:\n{e.Message}");
+                                            logBuilder.AppendLine($"Unable to decompress response:\n{e}");
                                         }
                                     }
                                     else
@@ -236,8 +236,8 @@ namespace EFTPatches.Patches
                     }
                     catch (Exception ex)
                     {
-                        lastErrorText = ex.Message;
-                        logError = $"<--- Exception in {client.GetType().Name}: {ex.Message}";
+                        lastErrorText = ex.ToString();
+                        logError = $"<--- Exception in {client.GetType().Name}: {ex}";
                     }
                 }
 

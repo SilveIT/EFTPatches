@@ -97,12 +97,12 @@ namespace EFTPatches.WebRequests
             catch (HttpRequestException ex)
             {
                 // Network-level issues (DNS failure, unreachable server, etc.)
-                return new BackResponse($"Network error: {ex.Message}", -1);
+                return new BackResponse($"Network error: {ex}", -1);
             }
             catch (Exception ex)
             {
                 // Other unexpected errors
-                return new BackResponse($"Unexpected error: {ex.Message}", -1);
+                return new BackResponse($"Unexpected error: {ex}", -1);
             }
         }
     }
