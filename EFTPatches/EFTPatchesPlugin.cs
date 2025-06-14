@@ -2,6 +2,7 @@
 using BepInEx.Logging;
 using EFTPatches.Patches;
 
+// ReSharper disable UnusedMember.Global
 // ReSharper disable UnusedMember.Local
 // ReSharper disable InconsistentNaming
 #pragma warning disable IDE0051 // Remove unused private members
@@ -12,9 +13,8 @@ namespace EFTPatches
     public class EFTPatchesPlugin : BaseUnityPlugin
     {
         public static EFTPatchesPlugin Instance { get; private set; }
-        public const int WEBRequestRetries = 3;
         public static ManualLogSource PluginLogger => Instance.Logger;
-        private void Awake()
+        public void Awake()
         {
             Instance = this;
             PluginSettings.Create(Config);

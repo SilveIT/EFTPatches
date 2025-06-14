@@ -14,6 +14,7 @@ namespace EFTPatches
         public readonly ConfigEntry<bool> LogHeaders;
         public readonly ConfigEntry<bool> LogResponses;
         public readonly ConfigEntry<int> MaxHexLogLength;
+        public readonly ConfigEntry<int> RetryCount;
 
         private const string UnityWebSection = "UnityWebRequest Fix";
 
@@ -21,6 +22,13 @@ namespace EFTPatches
         private PluginSettings(ConfigFile configFile)
         {
             // Bind settings under "UnityWebRequest Fix" section
+            RetryCount = configFile.Bind(
+                UnityWebSection,
+                "Retry Count",
+                5,
+                new ConfigDescription("How many times attempt to send the web request.",
+                    new AcceptableValueRange<int>(1, 20)));
+
             LogRequests = configFile.Bind(
                 UnityWebSection,
                 "Log UnityWebRequest-s",

@@ -5,20 +5,27 @@ using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
+using EFTPatches.WebRequests;
 using SPT.Reflection.Patching;
-using UnityEngine.Networking;
-// ReSharper disable InconsistentNaming
-
+using System.Text;
 using BackResponse = GClass629;
 using WebLogger = GClass630;
-using System.IO.Compression;
-using System.IO;
-using System.Text;
+
+// ReSharper disable InconsistentNaming
+// ReSharper disable RedundantAssignment
 
 namespace EFTPatches.Patches
 {
     public class WebRequestPatch : ModulePatch
     {
+        private static IWebClient[] _webClients;
+
+        private static IWebClient[] WebClients => _webClients ?? (_webClients = new IWebClient[]
+        {
+            new UnityWebClient(),
+            new HttpClientWebClient()
+        });
+
         //System.Threading.Tasks.Task`1<GClass629> Class315::WaitResponse(System.String,System.Byte[],System.Collections.Generic.Dictionary`2<System.String,System.String>,System.Int32)
         protected override MethodBase GetTargetMethod()
         {
@@ -45,18 +52,18 @@ namespace EFTPatches.Patches
                 // Log Headers if enabled
                 if (settings.LogHeaders.Value && headers != null && headers.Count > 0)
                 {
-                    var headerLog = HeadersToString(headers, "\n");
+                    var headerLog = Utils.HeadersToString(headers, "\n");
                     logBuilder.AppendLine($"Headers:\n{headerLog}");
                 }
 
                 // Log POST Data if enabled
                 if (settings.LogPostData.Value)
                 {
-                    if (data != null && data.Length > 0 && data.Length > 2 && IsZLibCompressed(data))
+                    if (data != null && data.Length > 0 && data.Length > 2 && Utils.IsZLibCompressed(data))
                     {
                         try
                         {
-                            var unZipped = DecompressZLib(data);
+                            var unZipped = Utils.DecompressZLib(data);
                             if (unZipped.Length > 0)
                             {
                                 var maxLength = PluginSettings.Instance.MaxHexLogLength.Value;
@@ -93,7 +100,7 @@ namespace EFTPatches.Patches
                 }
             }
 
-            var r = RetryWaitResponse(url, data, headers, timeoutSeconds, EFTPatchesPlugin.WEBRequestRetries);
+            var r = RetryWaitResponse(url, data, headers, timeoutSeconds, PluginSettings.Instance.RetryCount.Value, WebClients);
             __result = r;
 
             if (logRequestsEnabled && settings.LogResponses.Value)
@@ -104,7 +111,7 @@ namespace EFTPatches.Patches
                     try
                     {
                         // Wait for the response to complete
-                        BackResponse response = await r.ConfigureAwait(false);
+                        var response = await r.ConfigureAwait(false);
 
                         if (response != null)
                         {
@@ -116,7 +123,7 @@ namespace EFTPatches.Patches
                             // Log response headers
                             if (settings.LogHeaders.Value && response.responseHeaders != null && response.responseHeaders.Count > 0)
                             {
-                                var headerLog = HeadersToString(response.responseHeaders, "\n");
+                                var headerLog = Utils.HeadersToString(response.responseHeaders, "\n");
                                 logBuilder.AppendLine($"Response Headers:\n{headerLog}");
                             }
 
@@ -125,14 +132,14 @@ namespace EFTPatches.Patches
                             {
                                 if (response.responseData != null && response.responseData.Length > 0)
                                 {
-                                    byte[] responseData = response.responseData;
-                                    bool isZlib = IsZLibCompressed(responseData);
+                                    var responseData = response.responseData;
+                                    var isZlib = Utils.IsZLibCompressed(responseData);
 
                                     if (isZlib)
                                     {
                                         try
                                         {
-                                            var unZipped = DecompressZLib(responseData);
+                                            var unZipped = Utils.DecompressZLib(responseData);
                                             if (unZipped.Length > 0)
                                             {
                                                 var maxLength = settings.MaxHexLogLength.Value;
@@ -190,157 +197,56 @@ namespace EFTPatches.Patches
             byte[] data,
             Dictionary<string, string> headers,
             int timeoutSeconds,
-            int retries)
+            int retries,
+            params IWebClient[] clients)
         {
             const int retryDelayMs = 500;
-            BackResponse backResponse = null;
             var stopwatch = Stopwatch.StartNew();
             var logError = string.Empty;
-            var webReqResponseCode = 0L;
-            var webReqErrorText = string.Empty;
+            var lastErrorCode = 0;
+            var lastErrorText = string.Empty;
 
             for (var attempt = 0; attempt < retries; attempt++)
             {
-                try
+                for (var i = 0; i < clients.Length; i++)
                 {
-                    using (var unityWebRequest = new UnityWebRequest(url, "POST"))
+                    var client = clients[i];
+                    try
                     {
-                        unityWebRequest.uploadHandler = new UploadHandlerRaw(data);
-                        unityWebRequest.downloadHandler = new DownloadHandlerBuffer();
-                        unityWebRequest.certificateHandler = new SslCertPatchClass();
-                        unityWebRequest.timeout = timeoutSeconds;
-                        unityWebRequest.SetRequestHeader("Content-Type", "application/json");
+                        var backResponse = await client.SendRequestAsync(url, data, headers, timeoutSeconds);
 
-                        foreach (var header in headers)
-                            unityWebRequest.SetRequestHeader(header.Key, header.Value);
-
-                        try
+                        if (backResponse != null && string.IsNullOrEmpty(backResponse.errorText))
                         {
-                            backResponse = await RetryRequestAsync(url, unityWebRequest, stopwatch);
+                            if (attempt > 0 || i > 0)
+                                EFTPatchesPlugin.PluginLogger.LogWarning("Saved u from request error, URL: " + url);
+
+                            backResponse.stopwatch = stopwatch;
+                            return backResponse;
                         }
-                        catch (Exception)
+                        else
                         {
-                            backResponse = null;
-                        }
-
-                        if (backResponse == null)
-                        {
-                            webReqResponseCode = unityWebRequest.responseCode;
-                            webReqErrorText = unityWebRequest.error;
-                            var errorText = unityWebRequest.error;
-                            errorText = errorText == "Unknown Error"
-                                ? "Certificate validation error"
-                                : errorText + "\n" + unityWebRequest.downloadHandler.text;
-                            logError = $"<--- Error! HTTPS: {url}, isNetworkError:{unityWebRequest.isNetworkError}, isHttpError:{unityWebRequest.isHttpError}, responseCode:{(int)unityWebRequest.responseCode}\n responseHeaders:{HeadersToString(unityWebRequest.GetResponseHeaders(), "\n")}\nerror text: {errorText}";
+                            if (backResponse != null)
+                            {
+                                lastErrorCode = backResponse.responseCode;
+                                lastErrorText = backResponse.errorText;
+                            }
+                            logError =
+                                $"<--- Error! {client.GetType().Name} failed on URL: {url}, Response Code: {lastErrorCode}, Error: {lastErrorText}";
                         }
                     }
-
-                    // If the request succeeds, return the response
-                    if (backResponse != null)
+                    catch (Exception ex)
                     {
-                        if (attempt > 0)
-                            EFTPatchesPlugin.PluginLogger.LogInfo("Saved u from Cert Error, URL: " + url);
-                        return backResponse;
+                        lastErrorText = ex.Message;
+                        logError = $"<--- Exception in {client.GetType().Name}: {ex.Message}";
                     }
-
-                    // Log the failure and retry
-                    EFTPatchesPlugin.PluginLogger.LogWarning($"Request failed on attempt {attempt + 1}. Retrying in {retryDelayMs}ms...");
-                }
-                catch (Exception ex)
-                {
-                    backResponse = new BackResponse(ex.Message);
                 }
 
-                // Delay before retrying
-                if (attempt < retries)
-                    await Task.Delay(retryDelayMs);
+                EFTPatchesPlugin.PluginLogger.LogWarning($"Request failed on attempt {attempt + 1}. Retrying in {retryDelayMs}ms...");
+                await Task.Delay(retryDelayMs);
             }
 
-            if (!string.IsNullOrEmpty(logError))
-                WebLogger.Logger.LogError(logError);
-
-            if (backResponse == null)
-                backResponse = new BackResponse("Backend error: " + webReqErrorText, (int)webReqResponseCode);
-
-            return backResponse;
-        }
-
-        private static async Task<BackResponse> RetryRequestAsync(string url, UnityWebRequest request,
-        Stopwatch stopwatch)
-        {
-            var operation = request.SendWebRequest();
-
-            // Wait for the request to complete
-            while (!operation.isDone)
-            {
-                await Task.Yield();
-            }
-
-            // Check if the request succeeded
-            if (!request.isNetworkError && !request.isHttpError)
-            {
-                var responseHeaders = request.GetResponseHeaders();
-                var data = request.downloadHandler.data;
-                var text = request.downloadHandler.text;
-                var responseCode = (int)request.responseCode;
-
-                return new BackResponse(responseCode, string.Empty, responseHeaders, data, data.Length, text,
-                    stopwatch);
-            }
-
-            return null;
-        }
-
-        private static string HeadersToString(Dictionary<string, string> headers, string separator)
-        {
-            if (headers == null)
-            {
-                return string.Empty;
-            }
-            var text = string.Empty;
-            var aggregator = new HeadersAggregator(separator);
-
-            text = headers.Aggregate(text, aggregator.Aggregate);
-            return text;
-        }
-
-        public class HeadersAggregator
-        {
-            public HeadersAggregator(string separator)
-            {
-                _separator = separator;
-            }
-            public string Aggregate(string current, KeyValuePair<string, string> item)
-            {
-                return string.Concat(current, "{", item.Key, ":", item.Value, "}", _separator);
-            }
-
-            private readonly string _separator;
-        }
-
-        public static bool IsZLibCompressed(byte[] data)
-        {
-            return data?.Length >= 2 && data[0] == 0x78 && (
-                data[1] == 0x01 ||  // low compression
-                data[1] == 0x5E ||  // medium compression
-                data[1] == 0x9C ||  // high compression (default)
-                data[1] == 0xDA);   // highest compression
-        }
-
-        public static byte[] DecompressZLib(byte[] zlibData)
-        {
-            // Skip the first 2 bytes (ZLib header) and last 4 bytes (checksum)
-            int compressedLength = zlibData.Length - 6; // subtract header(2) + adler32(4)
-            byte[] compressedBytes = new byte[compressedLength];
-            Buffer.BlockCopy(zlibData, 2, compressedBytes, 0, compressedLength);
-
-            using (var input = new MemoryStream(compressedBytes))
-            using (var decompressor = new DeflateStream(input, CompressionMode.Decompress))
-            using (var result = new MemoryStream())
-            {
-                decompressor.CopyTo(result);
-                return result.ToArray();
-            }
+            WebLogger.Logger.LogError(logError);
+            return new BackResponse("Backend error: " + lastErrorText, lastErrorCode);
         }
     }
 }
