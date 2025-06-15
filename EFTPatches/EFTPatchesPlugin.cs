@@ -20,8 +20,7 @@ namespace EFTPatches
             Instance = this;
             AppContext.SetSwitch("System.Net.Http.UseSocketsHttpHandler", true);
             PluginSettings.Create(Config);
-            new TLSPatch1().Enable();
-            new TLSPatch2().Enable();
+            new BypassProcessHandshake().Enable();
             new WebRequestPatch().Enable();
             new MongoIDPatch().Enable();
         }

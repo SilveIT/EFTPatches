@@ -1,93 +1,36 @@
-﻿using System;
-using System.Linq;
+﻿using System.Collections.Generic;
 using SPT.Reflection.Patching;
 using System.Reflection;
-using UnityEngine;
+using System.Reflection.Emit;
+using HarmonyLib;
 // ReSharper disable InconsistentNaming
 
 namespace EFTPatches.Patches
 {
-    /// <summary>
-    /// Base class for TLS check patches
-    /// </summary>
-    public abstract class TLSPatchBase : ModulePatch
+    //System.Boolean Mono.Unity.UnityTlsContext::ProcessHandshake()
+    public class BypassProcessHandshake : ModulePatch
     {
-        private const string TargetTypeName = "Mono.Unity.Debug";
-        private const string MethodName = "CheckAndThrow";
+        protected override MethodBase GetTargetMethod() =>
+            AccessTools.Method("Mono.Unity.UnityTlsContext:ProcessHandshake");
 
-        protected abstract int ExpectedParameterCount { get; }
-
-        protected override MethodBase GetTargetMethod()
+        [PatchTranspiler]
+        public static IEnumerable<CodeInstruction> Transpile(IEnumerable<CodeInstruction> instructions)
         {
-            // Step 1: Find the System.dll assembly
-            var systemAssembly = AppDomain.CurrentDomain.GetAssemblies()
-                .FirstOrDefault(a => a.GetName().Name == "System");
-
-            if (systemAssembly == null)
+            var index = 0;
+            foreach (var instruction in instructions)
             {
-                Debug.LogError("Failed to find 'System' assembly.");
-                return null;
+                if (index >= 24 && index <= 26) // Remove throw this.lastException
+                    yield return new CodeInstruction(OpCodes.Nop);
+                else if (index == 50 || index == 36) // Remove two calls of Debug.CheckAndThrow
+                    yield return new CodeInstruction(OpCodes.Nop);
+                if (index >= 37 && index <= 39) // Remove args to ValidateCertificate call
+                    yield return new CodeInstruction(OpCodes.Nop);
+                else if (index == 40) // Remove ValidateCertificate call
+                    yield return new CodeInstruction(OpCodes.Ldc_I4_1);
+                else
+                    yield return instruction;
+                index++;
             }
-
-            // Step 2: Find the Mono.Unity.Debug type
-            var debugType = systemAssembly.GetType(TargetTypeName);
-            if (debugType == null)
-            {
-                Debug.LogError($"Failed to find '{TargetTypeName}' type.");
-                return null;
-            }
-
-            // Step 3: Get all methods named CheckAndThrow
-            var methods = debugType.GetMethods(BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)
-                .Where(m => m.Name == MethodName)
-                .ToArray();
-
-            if (methods.Length == 0)
-            {
-                Debug.LogError($"No methods found matching '{MethodName}' in '{TargetTypeName}'.");
-                return null;
-            }
-
-            // Step 4: Filter by expected parameter count
-            foreach (var method in methods)
-            {
-                var paramCount = method.GetParameters().Length;
-                if (paramCount == ExpectedParameterCount)
-                {
-                    return method;
-                }
-            }
-
-            Debug.LogError($"Could not find overload of '{MethodName}' with {ExpectedParameterCount} parameters.");
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// Patch for the 3-parameter overload of CheckAndThrow
-    /// </summary>
-    public class TLSPatch1 : TLSPatchBase
-    {
-        protected override int ExpectedParameterCount => 3;
-        [PatchPrefix]
-        public static bool Prefix()
-        {
-            // Skip original logic - effectively disable SSL checks
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Patch for the 4-parameter overload of CheckAndThrow
-    /// </summary>
-    public class TLSPatch2 : TLSPatchBase
-    {
-        protected override int ExpectedParameterCount => 4;
-        [PatchPrefix]
-        public static bool Prefix()
-        {
-            // Skip original logic - effectively disable SSL checks
-            return false;
         }
     }
 }
