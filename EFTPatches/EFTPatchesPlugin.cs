@@ -1,6 +1,7 @@
 ﻿using BepInEx;
 using BepInEx.Logging;
 using EFTPatches.Patches;
+using System;
 
 // ReSharper disable UnusedMember.Global
 // ReSharper disable UnusedMember.Local
@@ -17,7 +18,10 @@ namespace EFTPatches
         public void Awake()
         {
             Instance = this;
+            AppContext.SetSwitch("System.Net.Http.UseSocketsHttpHandler", true);
             PluginSettings.Create(Config);
+            new TLSPatch1().Enable();
+            new TLSPatch2().Enable();
             new WebRequestPatch().Enable();
             new MongoIDPatch().Enable();
         }

@@ -10,6 +10,7 @@ using SPT.Reflection.Patching;
 using System.Text;
 using BackResponse = GClass629;
 using WebLogger = GClass630;
+using System.Net;
 
 // ReSharper disable InconsistentNaming
 // ReSharper disable RedundantAssignment
@@ -208,8 +209,10 @@ namespace EFTPatches.Patches
 
             for (var attempt = 0; attempt < retries; attempt++)
             {
+                ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
                 for (var i = 0; i < clients.Length; i++)
                 {
+                    //TODO log last error for each client
                     var client = clients[i];
                     try
                     {
