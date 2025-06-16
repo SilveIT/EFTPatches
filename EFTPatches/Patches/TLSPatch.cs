@@ -19,14 +19,8 @@ namespace EFTPatches.Patches
             var index = 0;
             foreach (var instruction in instructions)
             {
-                if (index >= 24 && index <= 26) // Remove throw this.lastException
-                    yield return new CodeInstruction(OpCodes.Nop);
-                else if (index == 50 || index == 36) // Remove two calls of Debug.CheckAndThrow
-                    yield return new CodeInstruction(OpCodes.Nop);
-                if (index >= 37 && index <= 39) // Remove args to ValidateCertificate call
-                    yield return new CodeInstruction(OpCodes.Nop);
-                else if (index == 40) // Remove ValidateCertificate call
-                    yield return new CodeInstruction(OpCodes.Ldc_I4_1);
+                if (index >= 21 && index <= 50) // Remove throws, calls to CheckAndThrow and ValidateCertificate
+                    yield return new CodeInstruction(OpCodes.Nop) { labels = instruction.labels };
                 else
                     yield return instruction;
                 index++;
